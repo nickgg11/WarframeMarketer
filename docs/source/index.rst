@@ -14,13 +14,14 @@ Welcome to Warframe Market API's documentation!
    modules/getting_started
    modules/api/index
    modules/database/index
+   modules/gui/index
    modules/models/index
    modules/utils/index
 
 Overview
 --------
 
-Warframe Market API is a Python-based asynchronous client for tracking and analyzing Warframe Market data. It provides tools for market analysis, price tracking, and historical data management.
+Warframe Market API is a Python-based asynchronous client for tracking and analyzing Warframe Market data. It provides tools for market analysis, price tracking, and historical data management, along with a graphical user interface for easy interaction.
 
 Quick Start
 ----------
@@ -48,11 +49,22 @@ Basic Usage
    if __name__ == '__main__':
        asyncio.run(main())
 
+Running the GUI
+~~~~~~~~~~~
+
+.. code-block:: python
+
+   from src.gui import main
+   
+   if __name__ == "__main__":
+       main()
+
 Features
 --------
 
 - Asynchronous API client with rate limiting
 - PostgreSQL database integration
+- Graphical user interface for easy interaction
 - Market analysis tools
 - Historical order tracking
 - Price trend analysis

@@ -1,11 +1,15 @@
 # Warframe Market API Client
 
-A Python-based asynchronous client for tracking and analyzing Warframe Market data, with features for market analysis and price tracking.
+A Python-based asynchronous client for tracking and analyzing Warframe Market data, with features for market analysis, price tracking, and a graphical user interface for easy interaction.
 
 ## Features
 
 - Asynchronous API client with rate limiting and automatic retries
 - PostgreSQL database integration for storing market data
+- Graphical User Interface (GUI) with:
+  - Warframe price tracking dashboard
+  - Data update management
+  - Market trend visualization
 - Market analysis tools including:
   - Price trend analysis
   - Outlier detection
@@ -24,6 +28,7 @@ A Python-based asynchronous client for tracking and analyzing Warframe Market da
   - requests
   - python-dateutil
   - scipy
+  - PyQt6
 
 ## Installation
 
@@ -49,11 +54,22 @@ Run the main application:
 python src/main.py
 ```
 
-The application will:
+Or run the GUI application:
+
+```bash
+python src/gui.py
+```
+
+The CLI application will:
 1. Fetch all items from Warframe Market
 2. Identify and store warframe sets
 3. Process market orders for all warframes
 4. Analyze market trends and update order statuses
+
+The GUI application offers:
+1. A user-friendly interface to view warframe price data
+2. Tools to update market data
+3. Visualization of market trends and analytics
 
 ## Architecture
 
@@ -63,6 +79,7 @@ The application will:
 - **DatabaseOperations** (`src/database/operations.py`): Manages database operations and data persistence
 - **MarketAnalysis** (`src/utils/market_analysis.py`): Provides market analysis tools and metrics
 - **Data Models** (`src/models/`): Contains data structures and type definitions
+- **GUI** (`src/gui.py`): PyQt6-based graphical interface for interacting with the application
 
 ### Database Schema
 

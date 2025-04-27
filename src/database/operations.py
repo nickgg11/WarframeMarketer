@@ -1,11 +1,24 @@
-from typing import List, Tuple, Optional
+"""
+Database operations for the Warframe Market API.
+Provides a class for interacting with the database, including table creation,
+data insertion, retrieval, and maintenance operations.
+"""
+
+from typing import List, Tuple, Dict, Any
 from datetime import datetime, timezone, timedelta
 import logging
-from .config import connect
+
+import psycopg2
+from src.database.config import connect
 
 logger = logging.getLogger(__name__)
 
 class DatabaseOperations:
+    """Database operations handler for Warframe Market API.
+    
+    Manages all interactions with the PostgreSQL database, including schema creation,
+    data insertion, querying, and maintenance operations.
+    """
     def create_tables(self):
         """Create all necessary database tables if they don't exist"""
         conn = connect()
@@ -45,8 +58,8 @@ class DatabaseOperations:
                     item_id INTEGER REFERENCES known_warframes(id),
                     user_id VARCHAR(100) NOT NULL,
                     order_id VARCHAR(100) UNIQUE NOT NULL,
-                    initial_price INTEGER NOT NULL,
-                    final_price INTEGER NOT NULL,
+                    initial_price NUMERIC(10,2) NOT NULL,
+                    final_price NUMERIC(10,2) NOT NULL,
                     quantity INTEGER NOT NULL,
                     side market_side NOT NULL,
                     first_seen TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -63,7 +76,7 @@ class DatabaseOperations:
                     id SERIAL PRIMARY KEY,
                     item_id INTEGER REFERENCES known_warframes(id),
                     recorded_at TIMESTAMP WITH TIME ZONE NOT NULL,
-                    price INTEGER NOT NULL,
+                    price NUMERIC(10,2) NOT NULL,
                     quantity INTEGER NOT NULL,
                     side market_side NOT NULL,
                     UNIQUE(item_id, recorded_at, price, side)
@@ -76,8 +89,8 @@ class DatabaseOperations:
                     hour INTEGER CHECK (hour >= 0 AND hour < 24),
                     avg_price NUMERIC(10,2) NOT NULL,
                     median_price NUMERIC(10,2) NOT NULL,
-                    min_price INTEGER NOT NULL,
-                    max_price INTEGER NOT NULL,
+                    min_price NUMERIC(10,2) NOT NULL,
+                    max_price NUMERIC(10,2) NOT NULL,
                     volume INTEGER NOT NULL,
                     num_trades INTEGER NOT NULL,
                     side market_side NOT NULL,
@@ -91,8 +104,8 @@ class DatabaseOperations:
             conn.commit()
             logger.info("Database tables created successfully")
             
-        except Exception as e:
-            logger.error(f"Error creating tables: {e}")
+        except (psycopg2.Error, psycopg2.OperationalError) as e:
+            logger.error("Error creating tables: %s", e)
             conn.rollback()
             raise
         finally:
@@ -110,8 +123,8 @@ class DatabaseOperations:
                 (name,)
             )
             conn.commit()
-        except Exception as e:
-            logger.error(f"Error inserting warframe {name}: {e}")
+        except (psycopg2.Error, psycopg2.IntegrityError) as e:
+            logger.error("Error inserting warframe %s: %s", name, e)
             conn.rollback()
         finally:
             cur.close()
@@ -124,10 +137,19 @@ class DatabaseOperations:
         
         try:
             cur.execute('SELECT id, name FROM known_warframes')
-            return cur.fetchall()
+            result = cur.fetchall()
+            return [(int(id), str(name)) for id, name in result]  # Explicitly cast results
         finally:
             cur.close()
             conn.close()
+
+    def get_all_items(self) -> List[Tuple[int, str]]:
+        """Get all items from the database (currently same as get_all_warframes)
+        
+        Returns:
+            List of tuples containing item id and name
+        """
+        return self.get_all_warframes()
 
     def update_order_status(self) -> None:
         """Update status of orders that are old"""
@@ -143,8 +165,8 @@ class DatabaseOperations:
                 AND status = 'active'::order_status
             ''', (month_ago,))
             conn.commit()
-        except Exception as e:
-            logger.error(f"Error updating order statuses: {e}")
+        except (psycopg2.Error, psycopg2.OperationalError) as e:
+            logger.error("Error updating order statuses: %s", e)
             conn.rollback()
         finally:
             cur.close()
@@ -168,10 +190,10 @@ class DatabaseOperations:
             cur.execute('DELETE FROM item_prices WHERE recorded_at < %s', (cutoff_date,))
             
             conn.commit()
-            logger.info(f"Purged data older than {months} months")
+            logger.info("Purged data older than %s months", months)
             
-        except Exception as e:
-            logger.error(f"Error purging old data: {e}")
+        except (psycopg2.Error, psycopg2.OperationalError) as e:
+            logger.error("Error purging old data: %s", e)
             conn.rollback()
         finally:
             cur.close()
@@ -207,10 +229,312 @@ class DatabaseOperations:
             conn.commit()
             return True
             
-        except Exception as e:
-            logger.error(f"Database test failed: {e}")
+        except (psycopg2.Error, psycopg2.OperationalError) as e:
+            logger.error("Database test failed: %s", e)
             conn.rollback()
             return False
         finally:
             cur.close()
             conn.close()
+
+    def get_latest_prices(self, item_id: int) -> Dict[str, Any] | None:
+        """Get the latest prices for a specific warframe/item
+        
+        Args:
+            item_id: The database ID of the warframe
+            
+        Returns:
+            Dictionary with current, min and max prices, or None if not found
+        """
+        conn = connect()
+        cur = conn.cursor()
+        
+        try:
+            # Get the latest price statistics for this item
+            cur.execute('''
+                SELECT 
+                    avg_price, 
+                    min_price, 
+                    max_price 
+                FROM price_statistics 
+                WHERE item_id = %s 
+                ORDER BY date DESC, hour DESC 
+                LIMIT 1
+            ''', (item_id,))
+            
+            result = cur.fetchone()
+            if result:
+                return {
+                    'current': result[0],
+                    'min': result[1],
+                    'max': result[2]
+                }
+            return None
+                
+        except (psycopg2.Error, psycopg2.OperationalError) as e:
+            logger.error("Error getting latest prices for item %s: %s", item_id, e)
+            return None
+        finally:
+            cur.close()
+            conn.close()
+
+    def insert_price(self, item_id: int, price: float, quantity: int, side: str, recorded_at: datetime) -> None:
+        """Insert a price record into the database
+        
+        Args:
+            item_id: The database ID of the item
+            price: The price in platinum
+            quantity: The number of items
+            side: Either 'buy' or 'sell'
+            recorded_at: When the price was recorded
+        """
+        conn = connect()
+        cur = conn.cursor()
+        
+        try:
+            cur.execute('''
+                INSERT INTO item_prices (item_id, recorded_at, price, quantity, side)
+                VALUES (%s, %s, %s, %s, %s::market_side)
+                ON CONFLICT (item_id, recorded_at, price, side) DO NOTHING
+            ''', (item_id, recorded_at, price, quantity, side))
+            
+            conn.commit()
+        except (psycopg2.Error, psycopg2.OperationalError) as e:
+            logger.error("Error inserting price for item %s: %s", item_id, e)
+            conn.rollback()
+        finally:
+            cur.close()
+            conn.close()
+
+    def insert_order(self, item_id: int, order_id: str, price: float, 
+                    quantity: int, side: str, last_seen: datetime) -> None:
+        """Insert or update an order in the database
+        
+        Args:
+            item_id: The database ID of the item
+            order_id: The order ID from the Warframe Market API
+            price: The price in platinum
+            quantity: The number of items
+            side: Either 'buy' or 'sell'
+            last_seen: When the order was last seen
+        """
+        conn = connect()
+        cur = conn.cursor()
+        
+        try:
+            # Check if this order already exists
+            cur.execute(
+                'SELECT id, initial_price, last_seen FROM order_history WHERE order_id = %s',
+                (order_id,)
+            )
+            existing = cur.fetchone()
+            
+            if existing:
+                # Update existing order
+                order_id_db, initial_price, prev_last_seen = existing
+                
+                # Update the order
+                cur.execute('''
+                    UPDATE order_history
+                    SET final_price = %s,
+                        quantity = %s,
+                        last_seen = %s,
+                        price_history = CASE 
+                            WHEN final_price != %s THEN price_history || ARRAY[%s] 
+                            ELSE price_history
+                        END,
+                        visibilty_duration = %s - first_seen    
+                    WHERE id = %s
+                ''', (price, quantity, last_seen, price, last_seen, order_id_db))
+            else:
+                # Insert new order
+                cur.execute('''
+                    INSERT INTO order_history (
+                        item_id, order_id, initial_price, final_price,
+                        quantity, side, first_seen, last_seen, price_history
+                    )
+                    VALUES (
+                        %s, %s, %s, %s, %s, %s::market_side, %s, %s, ARRAY[%s]
+                    )
+                ''', (
+                    item_id, order_id, price, price, 
+                    quantity, side, last_seen, last_seen, price
+                ))
+                
+            conn.commit()
+        except (psycopg2.Error, psycopg2.OperationalError) as e:
+            logger.error("Error inserting/updating order %s: %s", order_id, e)
+            conn.rollback()
+        finally:
+            cur.close()
+            conn.close()
+
+    def get_recent_sell_prices(self, item_id: int, hours: int = 24) -> List[float]:
+        """Get recent sell prices for an item to calculate trimmed mean
+        
+        Args:
+            item_id: The database ID of the item
+            hours: How many hours back to look for prices
+            
+        Returns:
+            List of prices for the item in the specified time period
+        """
+        conn = connect()
+        cur = conn.cursor()
+        
+        try:
+            # Get recent prices for an item (sell orders only)
+            cur.execute('''
+                SELECT price 
+                FROM item_prices
+                WHERE item_id = %s 
+                  AND side = 'sell'::market_side
+                  AND recorded_at > NOW() - INTERVAL '%s hours'
+            ''', (item_id, hours))
+            
+            result = cur.fetchall()
+            return [float(price[0]) for price in result]  # Extract prices from result tuples
+        except (psycopg2.Error, psycopg2.OperationalError) as e:
+            logger.error("Error getting recent prices for item %s: %s", item_id, e)
+            return []
+        finally:
+            cur.close()
+            conn.close()
+
+    def fetch_and_store_items(self, client):
+        """Fetch all items from the API and store warframe sets."""
+        try:
+            data = client.fetch_items()
+            set_items = [
+                item["url_name"]
+                for item in data["payload"]["items"]
+                if "url_name" in item and "set" in item["url_name"].lower()
+            ]
+            for item_name in set_items:
+                self.insert_warframe(item_name)
+        except (KeyError, Exception) as e:
+            logger.error("Error fetching and storing items: %s", e)
+
+    def process_warframe_item(self, client, item_name: str):
+        """Process a single warframe item to check if it belongs to a warframe set."""
+        try:
+            data = client.fetch_item_details(item_name)
+            if "payload" in data and "item" in data["payload"]:
+                items_in_set = data["payload"]["item"]["items_in_set"]
+                for item in items_in_set:
+                    if "tags" in item and "warframe" in item["tags"]:
+                        self.insert_warframe(item_name)
+                        logger.info("Stored warframe: %s", item_name)
+                        break
+        except (KeyError, Exception) as e:
+            logger.error("Error processing warframe item %s: %s", item_name, e)
+
+    def identify_warframes(self, client, set_items: List[str]):
+        """Identify which sets are warframes and store them."""
+        tasks = [self.process_warframe_item(client, item) for item in set_items]
+        for task in tasks:
+            task  # Execute each task synchronously for simplicity
+        logger.info("Warframe sets identified and stored.")
+
+    def process_warframe_orders(self, client):
+        """Process orders for all known warframes."""
+        warframes = self.get_all_warframes()
+        for wf_id, name in warframes:
+            self.process_single_warframe(client, wf_id, name)
+
+    def process_single_warframe(self, client, wf_id: int, name: str):
+        """Process orders for a single warframe."""
+        try:
+            data = client.fetch_orders(name)
+            current_time = datetime.now(timezone.utc)
+            active_order_ids = set()
+            for order in data['payload']['orders']:
+                last_seen = client.parse_timestamp(order.get('last_seen'))
+                if not last_seen or (current_time - last_seen).days > 30:
+                    continue
+                self.insert_order(wf_id, order['id'], order['platinum'], order['quantity'], order['order_type'], last_seen)
+                active_order_ids.add(order['id'])
+            self.update_order_status()
+        except Exception as e:
+            logger.error("Error processing orders for %s: %s", name, e)
+
+    def process_order(self, wf_id: int, order: Dict, client):
+        """Process a single order in the database."""
+        try:
+            conn = connect()
+            cur = conn.cursor()
+            try:
+                cur.execute('''
+                    SELECT id, initial_price, price_changes 
+                    FROM order_history 
+                    WHERE order_id = %s
+                ''', (order['id'],))
+                existing_order = cur.fetchone()
+                current_price = int(order['platinum'])
+                last_seen = client.parse_timestamp(order.get('last_seen'))
+                if existing_order:
+                    order_id, initial_price, price_changes = existing_order
+                    if current_price != initial_price:
+                        price_changes += 1
+                    cur.execute('''
+                        UPDATE order_history 
+                        SET final_price = %s,
+                            last_seen = %s,
+                            price_changes = %s,
+                            visibility_duration = %s - first_seen
+                        WHERE id = %s
+                    ''', (
+                        current_price,
+                        last_seen,
+                        price_changes,
+                        last_seen,
+                        order_id
+                    ))
+                else:
+                    cur.execute('''
+                        INSERT INTO order_history (
+                            item_id, user_id, order_id, initial_price, 
+                            final_price, quantity, side, first_seen, 
+                            last_seen, listing_type
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s::market_side, %s, %s, 
+                                 CASE WHEN %s IN (
+                                     SELECT order_id FROM order_history 
+                                     WHERE user_id = %s AND item_id = %s
+                                 ) THEN 'relist'::listing_type ELSE 'new'::listing_type END
+                        )
+                    ''', (
+                        wf_id,
+                        order['user']['id'],
+                        order['id'],
+                        current_price,
+                        current_price,
+                        order['quantity'],
+                        order['order_type'],
+                        last_seen,
+                        last_seen,
+                        order['id'],
+                        order['user']['id'],
+                        wf_id
+                    ))
+                    cur.execute('''
+                        INSERT INTO item_prices (item_id, recorded_at, price, quantity, side)
+                        VALUES (%s, %s, %s, %s, %s::market_side)
+                        ON CONFLICT (item_id, recorded_at, price, side) 
+                        DO UPDATE SET quantity = item_prices.quantity + EXCLUDED.quantity
+                    ''', (
+                        wf_id,
+                        last_seen,
+                        current_price,
+                        order['quantity'],
+                        order['order_type']
+                    ))
+                conn.commit()
+            except (psycopg2.Error, ValueError, KeyError) as e:
+                conn.rollback()
+                logger.error("Database error processing order: %s", e)
+                raise
+            finally:
+                cur.close()
+                conn.close()
+        except (psycopg2.Error, ConnectionError) as e:
+            logger.error("Error processing order: %s", e)

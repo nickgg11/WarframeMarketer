@@ -1,0 +1,7 @@
+Can improve the overall styling and colors of the sphinx doc so it looks more pleseant.
+
+In the tab for trends I want you to create sub tabs for data that would logically group together, if the data needs to be visualized in a larger format like the heatmap put it in it's own tab. I wan the heat map to look something like the one in the pasted images, just ensure it's readable.
+
+I want the overall theme of the app to look like google, so there should be shadows when buttons are hovered over, buttons should also be rounded.
+
+is it possible to review my current project structure. Is it properly configured? Should all my imports need the src prefix? Do I need the run_app.py or is it a band-aid fix?
